@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Weird Baldi FNAF Game Hub</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:#0a0a0a;color:#e6e6e6;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+a{color:inherit}
+#hub{min-height:100%;display:flex;flex-direction:column;align-items:center;padding:32px 16px 40px}
+h1{font-size:22px;font-weight:700;letter-spacing:.04em;margin-bottom:18px}
+#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:22px;width:min(980px,100%)}
+.card{background:none;border:0;padding:0;display:flex;flex-direction:column;align-items:center;gap:10px;cursor:pointer;transition:transform .15s, filter .15s}
+.card:hover{transform:translateY(-3px);filter:brightness(1.08)}
+.card:active{transform:translateY(0)}
+.card img{width:136px;height:136px;border-radius:20px;object-fit:cover;background:#111;border:1px solid #222;display:block;box-shadow:0 6px 18px rgba(0,0,0,.45)}
+.card:hover img{border-color:#333}
+.card span{font-size:13px;font-weight:500;text-align:center;line-height:1.2;color:#ccc;max-width:136px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;white-space:normal}
+#viewer{position:fixed;inset:0;display:none;flex-direction:column;background:#000;z-index:50}
+#viewer.active{display:flex}
+#bar{height:44px;display:flex;align-items:center;gap:10px;padding:0 12px;background:#0f0f0f;border-bottom:1px solid #222;flex-shrink:0}
+#back{padding:6px 12px;border-radius:7px;border:1px solid #2a2a2a;background:#1a1a1a;color:#eee;cursor:pointer;font-size:13px;font-weight:600}
+#back:hover{background:#222}
+#vtitle{font-size:13px;color:#aaa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#vurl{font-size:11px;color:#555;font-family:ui-monospace,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-left:auto;max-width:40vw}
+#frame{flex:1;width:100%;height:100%;border:0;background:#000;display:block}
+#openExt{font-size:12px;color:#888;text-decoration:underline;margin-left:8px;white-space:nowrap}
+@media(max-width:520px){#vurl{display:none}}
+</style>
+</head>
+<body>
+<div id="hub">
+<h1>Weird Baldi FNAF Game</h1>
+<div id="grid"></div>
+</div>
+
+<div id="viewer">
+<div id="bar">
+<button id="back" type="button">← Back</button>
+<span id="vtitle"></span>
+<span id="vurl"></span>
+<a id="openExt" href="#" target="_blank" rel="noopener">open in new tab ↗</a>
+</div>
+<iframe id="frame" allow="fullscreen; autoplay; gamepad; cross-origin-isolated" allowfullscreen></iframe>
+</div>
+
+<script>
+const CDN_BASE = "https://cdn.jsdelivr.net/gh/Reeyuki/baldimodports@main/";
+
+const PROJECTS = [
+  { folder: "BaldiBaldsTheUniversePort", label: "Baldi Balds The Universe", icon: "https://cdn.jsdelivr.net/gh/Reeyuki/baldimodports@main/icons/baldiBalds.webp" },
+  { folder: "BaldisBasicsTeachingOnTwos", label: "Baldi's Basics: Teaching On Twos", icon: "https://cdn.jsdelivr.net/gh/Reeyuki/baldimodports@main/icons/baldisBasicsTeachingOnTwos.webp" },
+  { folder: "MinusThree", label: "Minus Three", icon: "https://cdn.jsdelivr.net/gh/Reeyuki/baldimodports@main/icons/minusThree.webp" },
+  { folder: "MinusThree/three", label: "Minus Three / THREE", icon: "https://cdn.jsdelivr.net/gh/Reeyuki/baldimodports@main/icons/three.webp" },
+  { folder: "Pneumo", label: "Pneumo", icon: "https://cdn.jsdelivr.net/gh/Reeyuki/baldimodports@main/icons/pneumo.webp" },
+  { folder: "SprintingBear5", label: "Sprinting Bear 5", icon: "https://cdn.jsdelivr.net/gh/Reeyuki/baldimodports@main/icons/playtimeHellBear5van.webp" },
+  { folder: "themathisleaking", label: "The Math Is Leaking", icon: "https://cdn.jsdelivr.net/gh/Reeyuki/baldimodports@main/icons/theMathIsLeaking.webp" },
+  { folder: "WheresBaldi", label: "Where's Baldi", icon: "https://cdn.jsdelivr.net/gh/Reeyuki/baldimodports@main/icons/wheresBaldi.webp" },
+  { folder: "WheresBaldi/baldicreepyrun", label: "Baldi Basic Creepy Run", icon: "https://cdn.jsdelivr.net/gh/Reeyuki/baldimodports@main/icons/baldi.webp" },
+  { folder: "wonkybaldi", label: "Wonky Baldi", icon: "https://cdn.jsdelivr.net/gh/Reeyuki/baldimodports@main/icons/baldi.webp" },
+];
+
+const grid = document.getElementById("grid");
+const viewer = document.getElementById("viewer");
+const frame = document.getElementById("frame");
+const vtitle = document.getElementById("vtitle");
+const vurl = document.getElementById("vurl");
+const openExt = document.getElementById("openExt");
+const back = document.getElementById("back");
+
+function cdnUrl(folder){
+  return CDN_BASE + folder.replace(/^\/+|\/+$/g,"") + "/";
+}
+
+function loadProject(folder, label){
+  const url = cdnUrl(folder);
+  vtitle.textContent = label + " " + folder;
+  vurl.textContent = url;
+  openExt.href = url;
+  frame.src = url;
+  viewer.classList.add("active");
+  history.pushState({viewer:true, folder}, "", "#"+encodeURIComponent(folder));
+}
+
+function closeViewer(){
+  viewer.classList.remove("active");
+  frame.src = "about:blank";
+  vtitle.textContent = "";
+  vurl.textContent = "";
+  if(location.hash) history.pushState(null,"", location.pathname);
+}
+
+back.addEventListener("click", closeViewer);
+window.addEventListener("popstate", (e)=>{
+  if(!e.state || !e.state.viewer) closeViewer();
+});
+
+for(const p of PROJECTS){
+  const el = document.createElement("button");
+  el.type = "button";
+  el.className = "card";
+  el.innerHTML = `<img src="${p.icon}" alt="${p.label}" loading="lazy" onerror="this.style.display='none'"><span>${p.label}</span>`;
+  el.addEventListener("click", ()=> loadProject(p.folder, p.label));
+  grid.appendChild(el);
+}
+
+// deep-link via hash
+if(location.hash){
+  const folder = decodeURIComponent(location.hash.slice(1));
+  const found = PROJECTS.find(x=>x.folder===folder);
+  if(found) loadProject(found.folder, found.label);
+}
+</script>
+</body>
+</html>

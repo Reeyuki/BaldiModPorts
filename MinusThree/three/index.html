@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>THREE</title>
+    <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, viewport-fit=cover">
+    <style>
+      :root { color-scheme: dark; }
+      html, body { height: 100%; margin: 0; background: #0b0f14; color: #e7edf5; font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+      #app { height: 100%; display: grid; place-items: center; }
+      #stage { width: min(1280px, 100vw); height: min(720px, 100vh); position: relative; border-radius: 14px; overflow: hidden; background: radial-gradient(900px 600px at 20% 10%, rgba(120,160,255,.12), transparent 60%), linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.02)); box-shadow: 0 18px 60px rgba(0,0,0,.55); }
+      #unity-canvas { width: 100%; height: 100%; display: block; background: transparent; }
+      #overlay { position: absolute; inset: 0; display: grid; align-content: center; justify-items: center; gap: 14px; padding: 24px; background: linear-gradient(180deg, rgba(11,15,20,.92), rgba(11,15,20,.78)); }
+      #title { font-size: 18px; letter-spacing: .2px; opacity: .95; }
+      #bar { width: min(520px, 84vw); height: 10px; background: rgba(255,255,255,.08); border-radius: 999px; overflow: hidden; }
+      #bar > div { height: 100%; width: 0%; background: linear-gradient(90deg, #6ea8ff, #a78bfa, #34d399); border-radius: 999px; transition: width 120ms linear; }
+      #status { width: min(520px, 84vw); display: flex; justify-content: space-between; gap: 12px; opacity: .9; }
+      #status .muted { opacity: .75; }
+
+      #banner { position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 3; display: none; gap: 8px; }
+      .msg { border: 1px solid rgba(255,255,255,.12); background: rgba(11,15,20,.72); padding: 10px 12px; border-radius: 12px; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+      .msg.error { border-color: rgba(255,86,86,.35); background: rgba(60,0,0,.35); }
+      .msg.warn { border-color: rgba(255,204,102,.35); background: rgba(60,40,0,.35); }
+      @media (max-width: 520px) { #stage { border-radius: 0; width: 100vw; height: 100vh; } }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="stage">
+        <canvas id="unity-canvas" tabindex="-1"></canvas>
+        <div id="overlay">
+          <div id="title">THREE</div>
+          <div id="bar"><div id="barFill"></div></div>
+          <div id="status">
+            <div id="statusText" class="muted">Preparing files…</div>
+            <div id="statusPct">0%</div>
+          </div>
+        </div>
+        <div id="banner"></div>
+      </div>
+    </div>
+    <script>
+      const ASSET_BASE = "https://cdn.jsdelivr.net/gh/Reeyuki/MinusThree@main/three/";
+      const canvas = document.getElementById("unity-canvas");
+      const overlay = document.getElementById("overlay");
+      const barFill = document.getElementById("barFill");
+      const statusText = document.getElementById("statusText");
+      const statusPct = document.getElementById("statusPct");
+      const banner = document.getElementById("banner");
+
+      function pad2(n) { return String(n).padStart(2, "0"); }
+      function setProgress(p, text) {
+        const clamped = Math.max(0, Math.min(1, p));
+        barFill.style.width = (clamped * 100).toFixed(1) + "%";
+        statusPct.textContent = Math.round(clamped * 100) + "%";
+        if (text) statusText.textContent = text;
+      }
+
+      function showBanner(msg, type) {
+        const el = document.createElement("div");
+        el.className = "msg" + (type === "error" ? " error" : type === "warning" ? " warn" : "");
+        el.textContent = msg;
+        banner.style.display = "grid";
+        banner.appendChild(el);
+        if (type !== "error") setTimeout(() => { if (el.parentNode) el.parentNode.removeChild(el); banner.style.display = banner.children.length ? "grid" : "none"; }, 5500);
+      }
+
+      const splitAssets = [
+        { key: "dataUrl", name: "three.data", parts: 3, bytes: 24251323, mime: "application/octet-stream" },
+        { key: "codeUrl", name: "three.wasm", parts: 3, bytes: 29839832, mime: "application/wasm" }
+      ];
+      const otherAssets = {
+        frameworkUrl: ASSET_BASE + "Build/three.framework.js",
+        loaderUrl: ASSET_BASE + "Build/three.loader.js",
+        streamingAssetsUrl: ASSET_BASE + "StreamingAssets"
+      };
+
+      const expectedDownloadBytes = splitAssets.reduce((a, x) => a + x.bytes, 0);
+      let downloadedBytes = 0;
+      function bumpDownloaded(n) {
+        downloadedBytes += n;
+        setProgress(expectedDownloadBytes ? (downloadedBytes / expectedDownloadBytes) * 0.8 : 0.05, "Downloading files…");
+      }
+
+      async function fetchArrayBufferWithProgress(url) {
+        const res = await fetch(url, { cache: "force-cache" });
+        if (!res.ok) throw new Error("HTTP " + res.status + " for " + url);
+        if (!res.body) {
+          const ab = await res.arrayBuffer();
+          bumpDownloaded(ab.byteLength);
+          return ab;
+        }
+        const reader = res.body.getReader();
+        const chunks = [];
+        let total = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          total += value.byteLength;
+          bumpDownloaded(value.byteLength);
+        }
+        const out = new Uint8Array(total);
+        let off = 0;
+        for (const c of chunks) { out.set(c, off); off += c.byteLength; }
+        return out.buffer;
+      }
+
+      async function buildBlobUrl(asset) {
+        const partUrls = Array.from({ length: asset.parts }, (_, i) => ASSET_BASE + "Build/" + asset.name + pad2(i));
+        const parts = await Promise.all(partUrls.map(fetchArrayBufferWithProgress));
+        const blob = new Blob(parts, { type: asset.mime });
+        return URL.createObjectURL(blob);
+      }
+
+      async function start() {
+        setProgress(0.02, "Preparing files…");
+        const builtUrls = await Promise.all(splitAssets.map(async (a) => [a.key, await buildBlobUrl(a)]));
+        setProgress(0.8, "Starting…");
+        const config = {
+          dataUrl: builtUrls.find(x => x[0] === "dataUrl")[1],
+          frameworkUrl: otherAssets.frameworkUrl,
+          codeUrl: builtUrls.find(x => x[0] === "codeUrl")[1],
+          streamingAssetsUrl: otherAssets.streamingAssetsUrl,
+          companyName: "amongzac",
+          productName: "THREE",
+          productVersion: "3.3.3",
+          showBanner
+        };
+
+        const script = document.createElement("script");
+        script.src = otherAssets.loaderUrl;
+        script.onload = () => {
+          createUnityInstance(canvas, config, (p) => setProgress(0.8 + p * 0.2, p < 0.98 ? "Initializing…": "Almost ready…"))
+            .then((unityInstance) => {
+              overlay.style.display = "none";
+            })
+            .catch((e) => { showBanner(String(e && e.message ? e.message : e), "error"); });
+        };
+        script.onerror = () => showBanner("Failed to load Unity loader script.", "error");
+        document.body.appendChild(script);
+      }
+
+      start().catch((e) => { showBanner(String(e && e.message ? e.message : e), "error"); });
+    </script>
+  </body>
+</html>

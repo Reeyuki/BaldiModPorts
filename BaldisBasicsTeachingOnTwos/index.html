@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="en-us">
+
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+  <title>Baldi's Basics: Teaching On Twos</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html,
+    body {
+      background: #111;
+      color: #ccc;
+      font-family: monospace;
+      height: 100%;
+      overflow: hidden;
+    }
+
+    #stage {
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #unityContainer {
+      width: 1280px;
+      height: 720px;
+      max-width: 100vw;
+      max-height: 100vh;
+      background: #000;
+      position: relative;
+    }
+
+    #unityContainer canvas {
+      width: 100% !important;
+      height: 100% !important;
+    }
+
+    #loading-overlay {
+      position: absolute;
+      inset: 0;
+      background: #111;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      z-index: 100;
+    }
+
+    #loading-title {
+      font-size: 22px;
+      color: #fff;
+      letter-spacing: 0.05em;
+      text-align: center;
+      line-height: 1.4;
+    }
+
+    #progress-wrap {
+      width: 360px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    #progress-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: #888;
+    }
+
+    #progress-bar-bg {
+      width: 100%;
+      height: 4px;
+      background: #2a2a2a;
+      border-radius: 2px;
+    }
+
+    #progress-bar-fill {
+      height: 100%;
+      background: #fff;
+      width: 0%;
+      border-radius: 2px;
+      transition: width 0.25s ease;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="stage">
+    <div id="unityContainer">
+      <div id="loading-overlay">
+        <div id="loading-title">Baldi's Basics: Teaching On Twos</div>
+        <div id="progress-wrap">
+          <div id="progress-labels">
+            <span id="progress-phase">Initializing</span>
+            <span id="progress-pct">0%</span>
+          </div>
+          <div id="progress-bar-bg">
+            <div id="progress-bar-fill"></div>
+          </div>
+        </div>
+      </div>
+      <canvas id="unity-canvas" style="display: none"></canvas>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var BASE = "https://cdn.jsdelivr.net/gh/reeyuki/BaldisBasicsTeachingOnTwos@main/Build/";
+
+      var DATA_CHUNKS = [
+        BASE + "BaldisBasicsTeachingOnTwos.data00.unityweb",
+        BASE + "BaldisBasicsTeachingOnTwos.data01.unityweb",
+        BASE + "BaldisBasicsTeachingOnTwos.data02.unityweb",
+        BASE + "BaldisBasicsTeachingOnTwos.data03.unityweb"
+      ];
+
+      var WASM_CODE_CHUNKS = [
+        BASE + "BaldisBasicsTeachingOnTwos.wasm.code00.unityweb",
+        BASE + "BaldisBasicsTeachingOnTwos.wasm.code01.unityweb",
+        BASE + "BaldisBasicsTeachingOnTwos.wasm.code02.unityweb"
+      ];
+
+      var WASM_FRAMEWORK_URL = BASE + "BaldisBasicsTeachingOnTwos.wasm.framework.unityweb";
+      var UNITY_LOADER_URL = BASE + "UnityLoader.js";
+
+      var overlay = document.getElementById("loading-overlay");
+      var barFill = document.getElementById("progress-bar-fill");
+      var pctEl = document.getElementById("progress-pct");
+      var phaseEl = document.getElementById("progress-phase");
+
+      function setProgress(pct, phase) {
+        barFill.style.width = pct + "%";
+        pctEl.textContent = Math.round(pct) + "%";
+        if (phase) phaseEl.textContent = phase;
+      }
+
+      function fetchChunks(urls, phaseLabel, startPct, endPct) {
+        var total = urls.length;
+        var results = new Array(total);
+        var done = 0;
+
+        return new Promise(function (resolve, reject) {
+          urls.forEach(function (url, i) {
+            fetch(url)
+              .then(function (r) {
+                if (!r.ok) throw new Error("HTTP " + r.status + " fetching " + url);
+                return r.arrayBuffer();
+              })
+              .then(function (buf) {
+                results[i] = buf;
+                done++;
+                setProgress(startPct + (done / total) * (endPct - startPct), phaseLabel);
+                if (done === total) resolve(results);
+              })
+              .catch(reject);
+          });
+        });
+      }
+
+      function concatBuffers(buffers) {
+        var total = 0;
+        buffers.forEach(function (b) {
+          total += b.byteLength;
+        });
+        var out = new Uint8Array(total);
+        var offset = 0;
+
+        buffers.forEach(function (b) {
+          out.set(new Uint8Array(b), offset);
+          offset += b.byteLength;
+        });
+
+        return out.buffer;
+      }
+
+      function loadScript(url) {
+        return fetch(url)
+          .then(function (r) {
+            if (!r.ok) throw new Error("HTTP " + r.status);
+            return r.text();
+          })
+          .then(function (code) {
+            var s = document.createElement("script");
+            s.text = code;
+            document.head.appendChild(s);
+          });
+      }
+
+      var interceptMap = {};
+
+      function installXHRIntercept() {
+        var OrigXHR = window.XMLHttpRequest;
+
+        function PatchedXHR() {
+          var xhr = new OrigXHR();
+          var self = this;
+          var intercepted = null;
+
+          self.open = function (method, url) {
+            var resolved = String(url);
+            for (var key in interceptMap) {
+              if (resolved.indexOf(key) !== -1 || key.indexOf(resolved) !== -1) {
+                intercepted = key;
+                break;
+              }
+            }
+
+            if (!intercepted) xhr.open.apply(xhr, arguments);
+          };
+
+          var proxyProps = [
+            "onload",
+            "onerror",
+            "onprogress",
+            "onreadystatechange",
+            "responseType",
+            "timeout",
+            "withCredentials"
+          ];
+
+          proxyProps.forEach(function (p) {
+            Object.defineProperty(self, p, {
+              get: function () {
+                return xhr[p];
+              },
+              set: function (v) {
+                xhr[p] = v;
+              }
+            });
+          });
+
+          [
+            "readyState",
+            "status",
+            "statusText",
+            "response",
+            "responseText"
+          ].forEach(function (p) {
+            Object.defineProperty(self, p, {
+              get: function () {
+                return xhr[p];
+              }
+            });
+          });
+
+          self.setRequestHeader = function () {
+            if (!intercepted) xhr.setRequestHeader.apply(xhr, arguments);
+          };
+
+          self.send = function () {
+            if (!intercepted) {
+              xhr.send.apply(xhr, arguments);
+              return;
+            }
+
+            var buf = interceptMap[intercepted];
+            var rt = xhr.responseType;
+
+            setTimeout(function () {
+              Object.defineProperty(xhr, "readyState", {
+                get: function () {
+                  return 4;
+                },
+                configurable: true
+              });
+
+              Object.defineProperty(xhr, "status", {
+                get: function () {
+                  return 200;
+                },
+                configurable: true
+              });
+
+              Object.defineProperty(xhr, "response", {
+                get: function () {
+                  return rt === "arraybuffer" ? buf : new Uint8Array(buf);
+                },
+                configurable: true
+              });
+
+              if (xhr.onload) xhr.onload({ target: xhr });
+            }, 0);
+          };
+
+          self.abort = function () {
+            if (!intercepted) xhr.abort();
+          };
+
+          self.addEventListener = function (evt, fn) {
+            xhr.addEventListener(evt, fn);
+          };
+        }
+
+        PatchedXHR.prototype = OrigXHR.prototype;
+        window.XMLHttpRequest = PatchedXHR;
+      }
+
+      setProgress(0, "Loading engine");
+
+      loadScript(UNITY_LOADER_URL)
+        .then(function () {
+          setProgress(2, "Fetching game data");
+          return fetchChunks(DATA_CHUNKS, "Fetching game data", 2, 50);
+        })
+        .then(function (dataBuffers) {
+          var dataBuf = concatBuffers(dataBuffers);
+
+          setProgress(50, "Fetching WASM code");
+
+          return fetchChunks(WASM_CODE_CHUNKS, "Fetching WASM code", 50, 82)
+            .then(function (wasmBuffers) {
+              var wasmBuf = concatBuffers(wasmBuffers);
+
+              setProgress(82, "Fetching framework");
+
+              return fetch(WASM_FRAMEWORK_URL)
+                .then(function (r) {
+                  return r.arrayBuffer();
+                })
+                .then(function (fwBuf) {
+                  return { dataBuf: dataBuf, wasmBuf: wasmBuf, fwBuf: fwBuf };
+                });
+            });
+        })
+        .then(function (bufs) {
+          setProgress(90, "Initializing");
+
+          var dataKey = "BaldisBasicsTeachingOnTwos.data.unityweb";
+          var wasmKey = "BaldisBasicsTeachingOnTwos.wasm.code.unityweb";
+          var fwKey = "BaldisBasicsTeachingOnTwos.wasm.framework.unityweb";
+
+          interceptMap[dataKey] = bufs.dataBuf;
+          interceptMap[wasmKey] = bufs.wasmBuf;
+          interceptMap[fwKey] = bufs.fwBuf;
+
+          installXHRIntercept();
+
+          var config = {
+            companyName: "A Ronezkj15 Thing",
+            productName: "Baldi's Basics: Teaching On Twos",
+            productVersion: "1.0",
+            dataUrl: dataKey,
+            wasmCodeUrl: wasmKey,
+            wasmFrameworkUrl: fwKey,
+            graphicsAPI: ["WebGL 2.0", "WebGL 1.0"],
+            webglContextAttributes: { preserveDrawingBuffer: false },
+            splashScreenStyle: "Dark",
+            backgroundColor: "#000000",
+            developmentBuild: false,
+            multithreading: false,
+            unityVersion: "2019.4.21f1"
+          };
+
+          var jsonBlob = URL.createObjectURL(
+            new Blob([JSON.stringify(config)], { type: "application/json" })
+          );
+
+          window.__unityInstance = UnityLoader.instantiate(
+            "unityContainer",
+            jsonBlob,
+            {
+              onProgress: function (instance, progress) {
+                setProgress(90 + progress * 10, "Loading");
+                if (progress >= 1) {
+                  setTimeout(function () {
+                    overlay.classList.add("hidden");
+                  }, 400);
+                }
+              }
+            }
+          );
+        })
+        .catch(function (err) {
+          phaseEl.textContent = "Error: " + err.message;
+          barFill.style.background = "#c43b3b";
+          console.error(err);
+        });
+
+
+    })();
+  </script>
+</body>
+
+</html>

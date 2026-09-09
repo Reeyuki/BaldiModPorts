@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>The Math Is Leaking</title>
+    <style>
+      body {
+        margin: 0;
+        background: #0a0a0a;
+        color: #fff;
+        font-family: sans-serif;
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+      }
+
+      #game-container {
+        position: relative;
+        width: 1280px;
+        height: 720px;
+        background: #000;
+      }
+
+      #unity-canvas {
+        width: 100%;
+        height: 100%;
+      }
+
+      #loader {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: #0a0a0a;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 10;
+        transition: opacity 0.5s;
+      }
+
+      #progress-container {
+        width: 300px;
+        height: 4px;
+        background: #222;
+        border-radius: 2px;
+        margin-top: 20px;
+        overflow: hidden;
+      }
+
+      #progress-bar {
+        width: 0%;
+        height: 100%;
+        background: #4a90e2;
+        transition: width 0.3s;
+      }
+
+      #status-text {
+        margin-top: 15px;
+        font-size: 12px;
+        color: #666;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+      }
+
+      #percentage {
+        font-size: 32px;
+        font-weight: 100;
+      }
+
+
+    </style>
+  </head>
+
+  <body>
+    <div id="game-container">
+      <div id="unity-canvas"></div>
+      <div id="loader">
+        <div id="percentage">0%</div>
+        <div id="progress-container">
+          <div id="progress-bar"></div>
+        </div>
+        <div id="status-text">INITIALIZING</div>
+      </div>
+
+    </div>
+    <script>
+      const BASE = "https://cdn.jsdelivr.net/gh/reeyuki/themathisleaking@main/";
+      const DATA = [
+        "Build/themathisleaking.data00",
+        "Build/themathisleaking.data01",
+        "Build/themathisleaking.data02",
+        "Build/themathisleaking.data03",
+        "Build/themathisleaking.data04",
+        "Build/themathisleaking.data05",
+      ];
+      const WASM = [
+        "Build/themathisleaking.wasm00",
+        "Build/themathisleaking.wasm01",
+        "Build/themathisleaking.wasm02",
+      ];
+      const FRAME = "Build/themathisleaking.wasm.framework.unityweb";
+      const LOAD = "Build/UnityLoader.js";
+      const pBar = document.getElementById("progress-bar");
+      const pTxt = document.getElementById("percentage");
+      const sTxt = document.getElementById("status-text");
+      const ldr = document.getElementById("loader");
+      let instance = null;
+
+      (function () {
+        const op = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function (m, u) {
+          if (typeof u === "string" && u.includes("blob:")) {
+            const i = u.indexOf("blob:");
+            if (i > 0) u = u.substring(i);
+          }
+          return op.apply(this, arguments);
+        };
+        const of = window.fetch;
+        window.fetch = function (u, o) {
+          if (typeof u === "string" && u.includes("blob:")) {
+            const i = u.indexOf("blob:");
+            if (i > 0) u = u.substring(i);
+          }
+          return of.apply(this, arguments);
+        };
+      })();
+
+      async function fetchFiles(list, label, start, weight) {
+        const blobs = [];
+        for (let i = 0; i < list.length; i++) {
+          sTxt.innerText = `${label} (${i + 1}/${list.length})`;
+          const r = await fetch(BASE + list[i]);
+          blobs.push(await r.blob());
+          const p = start + ((i + 1) / list.length) * weight;
+          pBar.style.width = p * 100 + "%";
+          pTxt.innerText = Math.round(p * 100) + "%";
+        }
+        return new Blob(blobs);
+      }
+      async function run() {
+        try {
+          const s = document.createElement("script");
+          s.src = BASE + LOAD;
+          document.head.appendChild(s);
+          await new Promise((r) => (s.onload = r));
+          const dBlb = await fetchFiles(DATA, "LOADING ASSETS", 0, 0.6);
+          const wBlb = await fetchFiles(WASM, "LOADING ENGINE", 0.6, 0.3);
+          const dUrl = URL.createObjectURL(dBlb);
+          const wUrl = URL.createObjectURL(wBlb);
+          const config = {
+            companyName: "BaldyBaldsTheUniverse",
+            productName: "The Math Is Leaking",
+            productVersion: "1.2.1",
+            dataUrl: dUrl,
+            wasmCodeUrl: wUrl,
+            wasmFrameworkUrl: new URL(BASE + FRAME, window.location.href).href,
+            graphicsAPI: ["WebGL 2.0", "WebGL 1.0"],
+            webglContextAttributes: { preserveDrawingBuffer: false },
+            splashScreenStyle: "Dark",
+            backgroundColor: "#000000",
+            developmentBuild: false,
+            multithreading: false,
+            unityVersion: "2019.4.41f1",
+          };
+          const jUrl = URL.createObjectURL(
+            new Blob([JSON.stringify(config)], { type: "application/json" }),
+          );
+          instance = UnityLoader.instantiate("unity-canvas", jUrl, {
+            onProgress: (inst, p) => {
+              if (p >= 1) {
+                ldr.style.opacity = "0";
+                setTimeout(() => (ldr.style.display = "none"), 500);
+              } else {
+                const total = 0.9 + p * 0.1;
+                pBar.style.width = total * 100 + "%";
+                pTxt.innerText = Math.round(total * 100) + "%";
+                sTxt.innerText = "STARTING";
+              }
+            },
+          });
+        } catch (e) {
+          sTxt.innerText = "ERROR: " + e.message;
+        }
+      }
+      run();
+    </script>
+  </body>
+</html>

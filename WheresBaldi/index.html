@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en-us">
+
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <title>Where's Baldi</title>
+  <style>
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background-color: #0d0e12;
+      color: #e2e8f0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #unity-canvas {
+      width: 100vw;
+      height: 100vh;
+      display: block;
+      position: absolute;
+      top: 0;
+      left: 0;
+      background-color: #0d0e12;
+    }
+
+    #loading-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: radial-gradient(circle at center, #16171d 0%, #0d0e12 100%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      transition: opacity 0.6s cubic-bezier(0.4, 0, 0.2, 1), visibility 0.6s;
+    }
+
+    .loading-box {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background: rgba(22, 23, 29, 0.85);
+      padding: 40px;
+      border-radius: 20px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(12px);
+    }
+
+    .game-title {
+      font-size: 28px;
+      font-weight: 700;
+      margin-bottom: 24px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .progress-container {
+      width: 320px;
+      height: 8px;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 4px;
+      overflow: hidden;
+      margin-bottom: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    #loading-bar {
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, #6366f1, #a855f7);
+      border-radius: 4px;
+      transition: width 0.1s ease-out;
+    }
+
+    #loading-text {
+      font-size: 14px;
+      color: #94a3b8;
+      font-weight: 500;
+    }
+
+
+  </style>
+</head>
+
+<body>
+  <canvas id="unity-canvas"></canvas>
+  <div id="loading-overlay">
+    <div class="loading-box">
+      <div class="game-title">Where's Baldi</div>
+      <div class="progress-container">
+        <div id="loading-bar"></div>
+      </div>
+      <div id="loading-text">Loading... 0%</div>
+    </div>
+  </div>
+  <script>
+    const baseUrl = "https://cdn.jsdelivr.net/gh/Reeyuki/WheresBaldi@main/";
+    const jsFiles = ["Build/web2.loader.js", "Build/web2.framework.js"];
+    const splits = {
+      "Build/web2.data": 4,
+      "Build/web2.wasm": 2
+    };
+    const loadedAssets = {};
+    const filesToFetch = [];
+    for (const js of jsFiles) {
+      filesToFetch.push({ name: js, url: baseUrl + js, type: "js" });
+    }
+    for (const [baseName, count] of Object.entries(splits)) {
+      const ext = baseName.split(".").pop();
+      const nameWithoutExt = baseName.substring(0, baseName.lastIndexOf("."));
+      for (let i = 0; i < count; i++) {
+        const pad = String(i).padStart(2, "0");
+        const partName = `${nameWithoutExt}.${ext}${pad}`;
+        filesToFetch.push({ name: baseName, partName: partName, url: baseUrl + partName, type: "split" });
+      }
+    }
+    const progressMap = {};
+    const totalFiles = filesToFetch.length;
+    let loadedCount = 0;
+    function updateOverallProgress() {
+      let totalBytes = 0;
+      let loadedBytes = 0;
+      let computable = true;
+      for (const f of filesToFetch) {
+        const p = progressMap[f.url];
+        if (p) {
+          if (p.lengthComputable) {
+            totalBytes += p.total;
+            loadedBytes += p.loaded;
+          } else {
+            computable = false;
+          }
+        } else {
+          computable = false;
+        }
+      }
+      let percent = 0;
+      if (computable && totalBytes > 0) {
+        percent = Math.round((loadedBytes / totalBytes) * 100);
+      } else {
+        percent = Math.round((loadedCount / totalFiles) * 100);
+      }
+      document.getElementById("loading-bar").style.width = percent + "%";
+      document.getElementById("loading-text").innerText = "Loading... " + percent + "%";
+    }
+    function concatenateBuffers(buffers) {
+      let totalLength = buffers.reduce((acc, val) => acc + val.byteLength, 0);
+      let temp = new Uint8Array(totalLength);
+      let offset = 0;
+      for (let buffer of buffers) {
+        temp.set(new Uint8Array(buffer), offset);
+        offset += buffer.byteLength;
+      }
+      return temp.buffer;
+    }
+    const OriginalXHR = window.XMLHttpRequest;
+    window.XMLHttpRequest = class {
+      constructor() {
+        this.xhr = new OriginalXHR();
+        this._url = "";
+        this.listeners = {};
+        this._intercepted = false;
+        this._response = null;
+        this._responseType = "";
+        const self = this;
+        const passThrough = ["onload", "onerror", "onprogress", "onreadystatechange", "onloadstart", "onloadend", "onabort", "ontimeout"];
+        for (const prop of passThrough) {
+          Object.defineProperty(this, prop, {
+            get() { return self.xhr[prop]; },
+            set(val) { self.xhr[prop] = val; }
+          });
+        }
+      }
+      open(method, url, async, user, password) {
+        this._url = url;
+        const match = Object.keys(loadedAssets).find(key => url.endsWith(key));
+        if (match) {
+          this._intercepted = true;
+          this._interceptKey = match;
+        } else {
+          this.xhr.open(method, url, async, user, password);
+        }
+      }
+      setRequestHeader(name, value) {
+        if (!this._intercepted) this.xhr.setRequestHeader(name, value);
+      }
+      overrideMimeType(mime) {
+        if (!this._intercepted) this.xhr.overrideMimeType(mime);
+      }
+      send(body) {
+        if (this._intercepted) {
+          const buffer = loadedAssets[this._interceptKey];
+          this._response = buffer;
+          setTimeout(() => {
+            const e = {
+              type: "load",
+              target: this,
+              loaded: buffer.byteLength,
+              total: buffer.byteLength,
+              lengthComputable: true
+            };
+            if (this.onload) this.onload(e);
+            if (this.listeners["load"]) {
+              this.listeners["load"].forEach(l => l(e));
+            }
+            if (this.onreadystatechange) this.onreadystatechange();
+          }, 0);
+        } else {
+          this.xhr.send(body);
+        }
+      }
+      addEventListener(type, listener) {
+        if (!this.listeners[type]) this.listeners[type] = [];
+        this.listeners[type].push(listener);
+        this.xhr.addEventListener(type, listener);
+      }
+      removeEventListener(type, listener) {
+        if (this.listeners[type]) {
+          this.listeners[type] = this.listeners[type].filter(l => l !== listener);
+        }
+        this.xhr.removeEventListener(type, listener);
+      }
+      get responseType() {
+        return this._intercepted ? this._responseType : this.xhr.responseType;
+      }
+      set responseType(val) {
+        if (this._intercepted) {
+          this._responseType = val;
+        } else {
+          this.xhr.responseType = val;
+        }
+      }
+      get responseText() {
+        if (this.responseType !== "" && this.responseType !== "text") return undefined;
+        return this._intercepted ? new TextDecoder().decode(this._response) : this.xhr.responseText;
+      }
+      get response() {
+        return this._intercepted ? this._response : this.xhr.response;
+      }
+      get readyState() {
+        return this._intercepted ? 4 : this.xhr.readyState;
+      }
+      get status() {
+        return this._intercepted ? 200 : this.xhr.status;
+      }
+      get statusText() {
+        return this._intercepted ? "OK" : this.xhr.statusText;
+      }
+      get timeout() { return this.xhr.timeout; }
+      set timeout(val) { this.xhr.timeout = val; }
+      get withCredentials() { return this.xhr.withCredentials; }
+      set withCredentials(val) { this.xhr.withCredentials = val; }
+      get upload() { return this.xhr.upload; }
+      getResponseHeader(name) { return this._intercepted ? null : this.xhr.getResponseHeader(name); }
+      getAllResponseHeaders() { return this._intercepted ? "" : this.xhr.getAllResponseHeaders(); }
+    };
+    const originalFetch = window.fetch;
+    window.fetch = function (input, init) {
+      const url = typeof input === "string" ? input : (input.url || "");
+      const match = Object.keys(loadedAssets).find(key => url.endsWith(key));
+      if (match) {
+        return Promise.resolve(new Response(loadedAssets[match], {
+          status: 200,
+          statusText: "OK",
+          headers: { "Content-Type": match.endsWith(".wasm") ? "application/wasm" : "application/octet-stream" }
+        }));
+      }
+      return originalFetch(input, init);
+    };
+    const fetchPromises = filesToFetch.map(file => {
+      return new Promise((resolve, reject) => {
+        const xhr = new OriginalXHR();
+        xhr.open("GET", file.url);
+        xhr.responseType = "arraybuffer";
+        xhr.onprogress = (e) => {
+          progressMap[file.url] = {
+            lengthComputable: e.lengthComputable,
+            loaded: e.loaded,
+            total: e.total
+          };
+          updateOverallProgress();
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            loadedCount++;
+            progressMap[file.url] = {
+              lengthComputable: true,
+              loaded: xhr.response.byteLength,
+              total: xhr.response.byteLength
+            };
+            updateOverallProgress();
+            resolve({ file: file, buffer: xhr.response });
+          } else {
+            reject(new Error("Failed to load " + file.url));
+          }
+        };
+        xhr.onerror = () => reject(new Error("Network error"));
+        xhr.send();
+      });
+    });
+    Promise.all(fetchPromises).then(results => {
+      const jsResults = {};
+      const splitResults = {};
+      for (const res of results) {
+        if (res.file.type === "js") {
+          jsResults[res.file.name] = res.buffer;
+        } else {
+          if (!splitResults[res.file.name]) {
+            splitResults[res.file.name] = [];
+          }
+          const index = parseInt(res.file.partName.replace(res.file.name, ""));
+          splitResults[res.file.name][index] = res.buffer;
+        }
+      }
+      for (const [name, buffers] of Object.entries(splitResults)) {
+        loadedAssets[name] = concatenateBuffers(buffers);
+      }
+      const loaderText = new TextDecoder().decode(jsResults["Build/web2.loader.js"]);
+      const loaderBlob = new Blob([loaderText], { type: "application/javascript" });
+      const loaderBlobUrl = URL.createObjectURL(loaderBlob);
+      const frameworkText = new TextDecoder().decode(jsResults["Build/web2.framework.js"]);
+      const frameworkBlob = new Blob([frameworkText], { type: "application/javascript" });
+      const frameworkBlobUrl = URL.createObjectURL(frameworkBlob);
+      const script = document.createElement("script");
+      script.src = loaderBlobUrl;
+      script.onload = () => {
+        const canvas = document.getElementById("unity-canvas");
+        const config = {
+          dataUrl: "Build/web2.data",
+          frameworkUrl: frameworkBlobUrl,
+          codeUrl: "Build/web2.wasm",
+          streamingAssetsUrl: "StreamingAssets",
+          companyName: "ANOMALY ANALYSIS CENTER",
+          productName: "Where's Baldi",
+          productVersion: "0.2",
+        };
+        createUnityInstance(canvas, config, (progress) => {
+          document.getElementById("loading-text").innerText = "Initializing... " + Math.round(progress * 100) + "%";
+        }).then((unityInstance) => {
+          const overlay = document.getElementById("loading-overlay");
+          overlay.style.opacity = 0;
+          overlay.style.visibility = "hidden";
+        }).catch((message) => {
+          alert(message);
+        });
+      };
+      document.body.appendChild(script);
+    });
+  </script>
+</body>
+
+</html>

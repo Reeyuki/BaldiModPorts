@@ -1,0 +1,589 @@
+<!doctype html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <title>Bear5</title>
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"
+    />
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #0b0f14;
+        color: #e6edf3;
+        font-family:
+          system-ui,
+          -apple-system,
+          Segoe UI,
+          Roboto,
+          Arial,
+          sans-serif;
+      }
+      #app {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+      }
+      #status {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        font-size: 14px;
+        opacity: 0.9;
+        z-index: 5;
+      }
+      #gameArea {
+        flex: 1;
+        position: relative;
+        display: flex;
+        min-height: 0;
+      }
+      #gameContainer {
+        flex: 1;
+        display: flex;
+        min-height: 0;
+      }
+      #gameContainer canvas {
+        width: 100% !important;
+        height: 100% !important;
+      }
+      #progress {
+        position: absolute;
+        left: 12px;
+        right: 12px;
+        bottom: 12px;
+        height: 10px;
+        border-radius: 999px;
+        overflow: hidden;
+        background: rgba(255, 255, 255, 0.08);
+      }
+      #bar {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #3b82f6, #22c55e);
+      }
+      #err {
+        white-space: pre-wrap;
+        padding: 12px;
+        color: #fecaca;
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="status">Loading…</div>
+      <div id="gameArea">
+        <div id="gameContainer"></div>
+        <div id="progress" aria-hidden="true"><div id="bar"></div></div>
+      </div>
+      <div id="err"></div>
+    </div>
+
+    <script>
+      let CDN_ROOT =
+        "https://cdn.jsdelivr.net/gh/reeyuki/weirdbaldifnafgame@main/";
+
+      function tryParseJsdelivrGhRoot(root) {
+        try {
+          const u = new URL(root, window.location.href);
+          if (u.hostname !== "cdn.jsdelivr.net") return null;
+          const parts = u.pathname.split("/").filter(Boolean);
+          if (parts.length < 3) return null;
+          if (parts[0] !== "gh") return null;
+          const user = parts[1];
+          const repoAtRef = parts[2];
+          const at = repoAtRef.indexOf("@");
+          if (at === -1) return null;
+          const repo = repoAtRef.slice(0, at);
+          const ref = repoAtRef.slice(at + 1);
+          if (!user || !repo || !ref) return null;
+          return { user, repo, ref };
+        } catch {
+          return null;
+        }
+      }
+
+      function isFullGitSha(ref) {
+        return /^[0-9a-f]{40}$/i.test(ref);
+      }
+
+      function normalizeRoot(root) {
+        if (!root) return "/";
+        if (root === "/") return "/";
+        return root.endsWith("/") ? root : root + "/";
+      }
+
+      function assetUrl(relPath) {
+        const root = normalizeRoot(CDN_ROOT);
+        const base = root.startsWith("http")
+          ? root
+          : window.location.origin + (root.startsWith("/") ? root : "/" + root);
+        return new URL(relPath, base).toString();
+      }
+
+      function loadScript(src) {
+        return new Promise((resolve, reject) => {
+          const s = document.createElement("script");
+          s.src = src;
+          s.async = true;
+          s.onload = resolve;
+          s.onerror = () => reject(new Error("Failed to load script: " + src));
+          document.head.appendChild(s);
+        });
+      }
+      (function patchWebAssemblyInstantiate() {
+        if (
+          typeof WebAssembly === "undefined" ||
+          typeof WebAssembly.instantiate !== "function"
+        )
+          return;
+
+        const encoder = new TextEncoder();
+        const originalInstantiate = WebAssembly.instantiate.bind(WebAssembly);
+
+        function writeUtf8ToMemory(env, str, ptr, maxBytes) {
+          if (!env || !env.memory || !env.memory.buffer) return 0;
+          const bytes = encoder.encode(str);
+          if (!ptr || !maxBytes) return bytes.length;
+          const heap = new Uint8Array(env.memory.buffer);
+          const n = Math.min(bytes.length, Math.max(0, maxBytes - 1));
+          heap.set(bytes.subarray(0, n), ptr >>> 0);
+          heap[(ptr >>> 0) + n] = 0;
+          return bytes.length;
+        }
+
+        WebAssembly.instantiate = function (bufferSource, importObject) {
+          try {
+            const env = importObject && importObject.env;
+            if (
+              env &&
+              typeof env._JS_SystemInfo_GetStreamingAssetsURL !== "function"
+            ) {
+              const url = assetUrl("StreamingAssets/");
+              env._JS_SystemInfo_GetStreamingAssetsURL = function (
+                buffer,
+                bufferSize,
+              ) {
+                return writeUtf8ToMemory(env, url, buffer, bufferSize);
+              };
+            }
+          } catch (_) {}
+          return originalInstantiate(bufferSource, importObject);
+        };
+      })();
+
+      function findChunkListForUrl(chunksByFilename, url) {
+        for (const filename of Object.keys(chunksByFilename)) {
+          if (url.endsWith("/" + filename) || url.endsWith(filename))
+            return chunksByFilename[filename];
+        }
+        return null;
+      }
+
+      async function fetchAndJoin(urls, onProgress) {
+        const loaded = new Array(urls.length).fill(false);
+
+        const parts = await Promise.all(
+          urls.map(async (url, i) => {
+            const jsd = tryParseJsdelivrGhRoot(CDN_ROOT);
+            const pinned = jsd ? isFullGitSha(jsd.ref) : true;
+            const res = await fetch(url, {
+              cache: pinned ? "force-cache" : "no-store",
+            });
+            if (!res.ok)
+              throw new Error(
+                "Failed to fetch chunk: " + url + " (" + res.status + ")",
+              );
+            const buf = await res.arrayBuffer();
+            loaded[i] = true;
+            if (typeof onProgress === "function") {
+              const done = loaded.filter(Boolean).length;
+              onProgress({
+                lengthComputable: true,
+                loaded: done,
+                total: urls.length,
+                chunk: done,
+                chunks: urls.length,
+              });
+            }
+            return new Uint8Array(buf);
+          }),
+        );
+
+        let totalBytes = 0;
+        for (const p of parts) totalBytes += p.byteLength;
+        const out = new Uint8Array(totalBytes);
+        let offset = 0;
+        for (const p of parts) {
+          out.set(p, offset);
+          offset += p.byteLength;
+        }
+        return out;
+      }
+
+      function patchUnityLoaderInstantiateNoJson() {
+        if (!window.UnityLoader || !UnityLoader.instantiate) return;
+
+        const originalInstantiate = UnityLoader.instantiate;
+
+        function absoluteHref(href) {
+          absoluteHref.link = absoluteHref.link || document.createElement("a");
+          absoluteHref.link.href = href;
+          absoluteHref.link.href = absoluteHref.link.href;
+          return absoluteHref.link.href;
+        }
+
+        function instantiateFromConfig(container, baseUrl, config, opts) {
+          function setupContainer(containerEl, instance) {
+            if (typeof containerEl === "string")
+              containerEl = document.getElementById(containerEl);
+            if (!containerEl) return false;
+
+            containerEl.innerHTML = "";
+            containerEl.style.border =
+              containerEl.style.margin =
+              containerEl.style.padding =
+                0;
+            if (
+              getComputedStyle(containerEl).getPropertyValue("position") ===
+              "static"
+            )
+              containerEl.style.position = "relative";
+            containerEl.style.width = instance.width || containerEl.style.width;
+            containerEl.style.height =
+              instance.height || containerEl.style.height;
+            instance.container = containerEl;
+
+            const Module = instance.Module;
+            Module.canvas = document.createElement("canvas");
+            Module.canvas.style.width = "100%";
+            Module.canvas.style.height = "100%";
+            Module.canvas.addEventListener("contextmenu", (e) =>
+              e.preventDefault(),
+            );
+            Module.canvas.id = "#canvas";
+            containerEl.appendChild(Module.canvas);
+
+            instance.compatibilityCheck(
+              instance,
+              function () {
+                for (const key of Object.keys(config))
+                  Module[key] = config[key];
+
+                const bg = Module.backgroundUrl
+                  ? "center/cover url('" +
+                    Module.resolveBuildUrl(Module.backgroundUrl) +
+                    "')"
+                  : Module.backgroundColor
+                    ? " " + Module.backgroundColor
+                    : "";
+                containerEl.style.background = bg;
+
+                instance.onProgress(instance, 0);
+                UnityLoader.loadModule(Module);
+              },
+              function () {
+                Module.printErr(
+                  "Instantiation terminated due to the failed compatibility check: " +
+                    (baseUrl || "[inline config]"),
+                );
+              },
+            );
+
+            return true;
+          }
+
+          const instance = {
+            url: baseUrl,
+            onProgress: UnityLoader.Progress.handler,
+            compatibilityCheck: UnityLoader.compatibilityCheck,
+            Module: {
+              graphicsAPI: ["WebGL 2.0", "WebGL 1.0"],
+              onAbort: function (e) {
+                if (e !== void 0) {
+                  this.print(e);
+                  this.printErr(e);
+                  e = JSON.stringify(e);
+                } else {
+                  e = "";
+                }
+                e = "abort(" + e + ") at " + this.stackTrace();
+                throw e;
+              },
+              preRun: [],
+              postRun: [],
+              print: function (e) {
+                console.log(e);
+              },
+              printErr: function (e) {
+                console.error(e);
+              },
+              Jobs: {},
+              buildDownloadProgress: {},
+              resolveBuildUrl: function (p) {
+                return p.match(/(http|https|ftp|file):\/\//)
+                  ? p
+                  : baseUrl.substring(0, baseUrl.lastIndexOf("/") + 1) + p;
+              },
+              streamingAssetsUrl: function () {
+                return absoluteHref(this.resolveBuildUrl("../StreamingAssets"));
+              },
+              pthreadMainPrefixURL: "Build/",
+            },
+            SetFullscreen: function () {
+              if (instance.Module.SetFullscreen)
+                return instance.Module.SetFullscreen.apply(
+                  instance.Module,
+                  arguments,
+                );
+            },
+            SendMessage: function () {
+              if (instance.Module.SendMessage)
+                return instance.Module.SendMessage.apply(
+                  instance.Module,
+                  arguments,
+                );
+            },
+          };
+
+          instance.Module.gameInstance = instance;
+          instance.popup = function (msg, buttons) {
+            return UnityLoader.Error.popup(instance, msg, buttons);
+          };
+          instance.Module.postRun.push(function () {
+            instance.onProgress(instance, 1);
+          });
+
+          if (opts) {
+            for (const k in opts) {
+              if (k === "Module") {
+                for (const mk in opts.Module)
+                  instance.Module[mk] = opts.Module[mk];
+              } else {
+                instance[k] = opts[k];
+              }
+            }
+          }
+
+          if (!setupContainer(container, instance)) {
+            document.addEventListener("DOMContentLoaded", function () {
+              setupContainer(container, instance);
+            });
+          }
+
+          return instance;
+        }
+
+        UnityLoader.instantiate = function (container, urlOrConfig, opts) {
+          if (urlOrConfig && typeof urlOrConfig === "object") {
+            const baseUrl = assetUrl("Build/");
+            return instantiateFromConfig(
+              container,
+              baseUrl,
+              urlOrConfig,
+              opts || {},
+            );
+          }
+          return originalInstantiate(container, urlOrConfig, opts);
+        };
+      }
+
+      function patchUnityLoaderForChunks() {
+        const chunksByFilename = patchUnityLoaderForChunks.chunksByFilename;
+        if (!chunksByFilename) return;
+        if (!window.UnityLoader || !UnityLoader.downloadJob) return;
+
+        const originalDownloadJob = UnityLoader.downloadJob;
+        UnityLoader.downloadJob = function (instance, job) {
+          const chunkUrls = findChunkListForUrl(
+            chunksByFilename,
+            job.parameters.url,
+          );
+          if (!chunkUrls) return originalDownloadJob(instance, job);
+
+          (async () => {
+            try {
+              const joined = await fetchAndJoin(
+                chunkUrls,
+                job.parameters.onprogress,
+              );
+              const looksGzip =
+                joined &&
+                joined.byteLength >= 2 &&
+                joined[0] === 0x1f &&
+                joined[1] === 0x8b;
+              if (looksGzip && UnityLoader.Compression?.decompress) {
+                UnityLoader.Compression.decompress(joined, (decompressed) => {
+                  job.complete(decompressed);
+                });
+              } else {
+                job.complete(joined);
+              }
+            } catch (err) {
+              console.error(err);
+              job.complete(null);
+            }
+          })();
+        };
+      }
+
+      function onProgress(unityInstance, progress) {
+        const statusEl = document.getElementById("status");
+        const barEl = document.getElementById("bar");
+        if (!statusEl || !barEl) return;
+        const pct = Math.round(progress * 100);
+        statusEl.textContent = "Loading… " + pct + "%";
+        barEl.style.width = pct + "%";
+      }
+
+      function boot() {
+        const errEl = document.getElementById("err");
+        const statusEl = document.getElementById("status");
+
+        try {
+          const gameInstance = UnityLoader.instantiate(
+            "gameContainer",
+            boot.BUILD_CONFIG,
+            { onProgress },
+          );
+
+          const progressEl = document.getElementById("progress");
+          const checkReady = setInterval(() => {
+            if (
+              gameInstance &&
+              gameInstance.Module &&
+              gameInstance.Module.calledRun
+            ) {
+              clearInterval(checkReady);
+              if (progressEl) progressEl.style.display = "none";
+              statusEl.textContent = "Ready";
+            }
+          }, 250);
+        } catch (e) {
+          errEl.style.display = "block";
+          errEl.textContent = String(e && e.stack ? e.stack : e);
+          statusEl.textContent = "Failed to start";
+        }
+      }
+
+      (async function main() {
+        const errEl = document.getElementById("err");
+        const statusEl = document.getElementById("status");
+        try {
+          const jsd = tryParseJsdelivrGhRoot(CDN_ROOT);
+          if (jsd && !isFullGitSha(jsd.ref)) {
+            statusEl.textContent = "Resolving CDN commit…";
+            try {
+              const cacheKey = `jsd:sha:${jsd.user}/${jsd.repo}@${jsd.ref}`;
+              let sha = null;
+              try {
+                const cached = JSON.parse(
+                  sessionStorage.getItem(cacheKey) || "null",
+                );
+                if (
+                  cached &&
+                  typeof cached.sha === "string" &&
+                  isFullGitSha(cached.sha) &&
+                  typeof cached.t === "number" &&
+                  Date.now() - cached.t < 2 * 60 * 1000
+                ) {
+                  sha = cached.sha;
+                }
+              } catch (_) {}
+
+              if (!sha) {
+                const resp = await fetch(
+                  `https://api.github.com/repos/${jsd.user}/${jsd.repo}/commits/${encodeURIComponent(jsd.ref)}`,
+                  {
+                    headers: {
+                      Accept: "application/vnd.github+json",
+                    },
+                    cache: "no-store",
+                  },
+                );
+                if (resp.ok) {
+                  const data = await resp.json();
+                  if (
+                    data &&
+                    typeof data.sha === "string" &&
+                    isFullGitSha(data.sha)
+                  ) {
+                    sha = data.sha;
+                    sessionStorage.setItem(
+                      cacheKey,
+                      JSON.stringify({ sha, t: Date.now() }),
+                    );
+                  }
+                }
+              }
+              if (sha && isFullGitSha(sha)) {
+                CDN_ROOT = `https://cdn.jsdelivr.net/gh/${jsd.user}/${jsd.repo}@${sha}/`;
+              }
+            } catch (e) {
+              console.warn("Failed to resolve branch to commit SHA", e);
+            }
+          }
+
+          boot.BUILD_CONFIG = {
+            companyName: "DefaultCompany",
+            productName: "Baldi's Basics Classic",
+            dataUrl: assetUrl("Build/playtimehelbear5van.data.unityweb"),
+            wasmCodeUrl: assetUrl(
+              "Build/playtimehelbear5van.wasm.code.unityweb",
+            ),
+            wasmFrameworkUrl: assetUrl(
+              "Build/playtimehelbear5van.wasm.framework.unityweb",
+            ),
+            TOTAL_MEMORY: 16777216,
+            graphicsAPI: ["WebGL 2.0", "WebGL 1.0"],
+            webglContextAttributes: { preserveDrawingBuffer: false },
+            splashScreenStyle: "Dark",
+            backgroundColor: "#000000",
+          };
+
+          patchUnityLoaderForChunks.chunksByFilename = {
+            "playtimehelbear5van.data.unityweb": [
+              assetUrl("Build/playtimehelbear5van.data.unityweb00"),
+              assetUrl("Build/playtimehelbear5van.data.unityweb01"),
+              assetUrl("Build/playtimehelbear5van.data.unityweb02"),
+              assetUrl("Build/playtimehelbear5van.data.unityweb03"),
+              assetUrl("Build/playtimehelbear5van.data.unityweb04"),
+              assetUrl("Build/playtimehelbear5van.data.unityweb05"),
+              assetUrl("Build/playtimehelbear5van.data.unityweb06"),
+              assetUrl("Build/playtimehelbear5van.data.unityweb07"),
+              assetUrl("Build/playtimehelbear5van.data.unityweb08"),
+              assetUrl("Build/playtimehelbear5van.data.unityweb09"),
+              assetUrl("Build/playtimehelbear5van.data.unityweb10"),
+              assetUrl("Build/playtimehelbear5van.data.unityweb11"),
+              assetUrl("Build/playtimehelbear5van.data.unityweb12"),
+            ],
+            "playtimehelbear5van.wasm.code.unityweb": [
+              assetUrl("Build/playtimehelbear5van.wasm.code.unityweb00"),
+              assetUrl("Build/playtimehelbear5van.wasm.code.unityweb01"),
+              assetUrl("Build/playtimehelbear5van.wasm.code.unityweb02"),
+            ],
+          };
+
+          statusEl.textContent = "Loading loader…";
+          await loadScript(assetUrl("Build/UnityLoader.js"));
+          statusEl.textContent = "Loading…";
+          patchUnityLoaderInstantiateNoJson();
+          patchUnityLoaderForChunks();
+          boot();
+        } catch (e) {
+          errEl.style.display = "block";
+          errEl.textContent = String(e && e.stack ? e.stack : e);
+          statusEl.textContent = "Failed to start";
+        }
+      })();
+    </script>
+  </body>
+</html>

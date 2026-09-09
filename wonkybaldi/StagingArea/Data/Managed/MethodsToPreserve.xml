@@ -1,0 +1,24 @@
+<linker>
+	<assembly fullname="Assembly-CSharp" ignoreIfMissing="1">
+		<type fullname="StartButton">
+			<method name="StartGame"/>
+		</type>
+		<type fullname="UiSettings">
+			<method name="UpdateState"/>
+			<method name="UpdateState"/>
+			<method name="UpdateState"/>
+			<method name="UpdateState"/>
+			<method name="UpdateState"/>
+			<method name="UpdateState"/>
+			<method name="UpdateState"/>
+			<method name="UpdateState"/>
+		</type>
+	</assembly>
+	<assembly fullname="UnityEngine.CoreModule" ignoreIfMissing="1">
+		<type fullname="UnityEngine.GameObject">
+			<method name="SetActive"/>
+			<method name="SetActive"/>
+			<method name="SetActive"/>
+		</type>
+	</assembly>
+</linker>

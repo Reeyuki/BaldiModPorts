@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en-us">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+    <title>MINUS THREE</title>
+    <style>
+        body {
+            margin: 0;
+            background: #0a0a0a;
+            color: #eee;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden
+        }
+
+        #unity-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center
+        }
+
+        canvas {
+            width: 100%;
+            height: 100%;
+            background: #000;
+            display: none;
+            outline: none
+        }
+
+        #loading {
+            text-align: center;
+            z-index: 10
+        }
+
+        #progress-text {
+            font-size: 18px;
+            font-weight: 300;
+            margin-bottom: 20px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: #00ffa3;
+            text-shadow: 0 0 10px rgba(0, 255, 163, 0.3)
+        }
+
+        #progress-bar {
+            width: 240px;
+            height: 2px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 1px;
+            margin: 0 auto;
+            overflow: hidden
+        }
+
+        #progress-fill {
+            width: 0;
+            height: 100%;
+            background: #00ffa3;
+            box-shadow: 0 0 15px #00ffa3;
+            transition: width 0.3s ease-out
+        }
+
+
+    </style>
+</head>
+
+<body>
+    <div id="unity-container">
+        <canvas id="unity-canvas"></canvas>
+        <div id="loading">
+            <div id="progress-text">Initializing...</div>
+            <div id="progress-bar">
+                <div id="progress-fill"></div>
+            </div>
+        </div>
+    </div>
+    <script>
+        const ROOT = "https://cdn.jsdelivr.net/gh/Reeyuki/MinusThree@48371156330b8ab8b956867330df1a42fa258082/";
+        const BUILD = ROOT + "Build/";
+        const ASSETS = {
+            loader: "minusthree.loader.js",
+            framework: "minusthree.framework.js.unityweb",
+            wasm: "minusthree.wasm.unityweb",
+            dataName: "minusthree.data.unityweb",
+            dataCount: 4
+        };
+        const canvas = document.querySelector("#unity-canvas");
+        const loading = document.querySelector("#loading");
+        const progressText = document.querySelector("#progress-text");
+        const progressFill = document.querySelector("#progress-fill");
+        async function start() {
+            try {
+                const paths = [BUILD + ASSETS.loader, BUILD + ASSETS.framework, BUILD + ASSETS.wasm];
+                for (let i = 0; i < ASSETS.dataCount; i++) paths.push(`${BUILD}${ASSETS.dataName}${String(i).padStart(2, '0')}`);
+                let loaded = 0;
+                const results = await Promise.all(paths.map(async p => {
+                    const r = await fetch(p);
+                    if (!r.ok) throw new Error("Failed to load: " + p);
+                    const b = await r.arrayBuffer();
+                    loaded++;
+                    const pct = Math.round((loaded / paths.length) * 100);
+                    progressText.innerText = `Loading Assets... ${pct}%`;
+                    progressFill.style.width = pct + "%";
+                    return b;
+                }));
+                const [lBuf, fBuf, wBuf, ...dChunks] = results;
+                const dUrl = URL.createObjectURL(new Blob(dChunks));
+                const fUrl = URL.createObjectURL(new Blob([fBuf]));
+                const wUrl = URL.createObjectURL(new Blob([wBuf], { type: "application/wasm" }));
+                const s = document.createElement("script");
+                s.src = URL.createObjectURL(new Blob([lBuf]));
+                s.onload = () => {
+                    createUnityInstance(canvas, {
+                        dataUrl: dUrl,
+                        frameworkUrl: fUrl,
+                        codeUrl: wUrl,
+                        streamingAssetsUrl: ROOT + "StreamingAssets",
+                        companyName: "JosephPLover",
+                        productName: "MINUS THREE",
+                        productVersion: "-3.6",
+                    }, (p) => {
+                        progressText.innerText = `Preparing... ${Math.round(p * 100)}%`;
+                        progressFill.style.width = (p * 100) + "%";
+                    }).then(i => {
+                        loading.style.display = "none";
+                        canvas.style.display = "block";
+                        canvas.focus();
+                    });
+                };
+                document.body.appendChild(s);
+            } catch (e) {
+                progressText.innerText = "LOAD FAILED";
+                progressText.style.color = "#ff4444";
+            }
+        }
+        start();
+    </script>
+</body>
+
+</html>

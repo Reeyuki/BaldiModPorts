@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en-us">
+
+<head>
+    <meta charset="utf-8">
+    <title>BaldiBaldsTheUniverse</title>
+    <style>
+        body {
+            background: #0b0b0b;
+            color: #f0f0f0;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: -apple-system, system-ui, sans-serif;
+        }
+
+        #unity-canvas {
+            width: 100vw;
+            height: 100vh;
+            display: block;
+            background: #000;
+        }
+
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 24px;
+            font-weight: 200;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+
+    </style>
+</head>
+
+<body>
+    <canvas id="unity-canvas"></canvas>
+    <div id="loading">Loading... 0%</div>
+    <script>
+        const canvas = document.querySelector("#unity-canvas");
+        const loading = document.querySelector("#loading");
+        const root = "https://cdn.jsdelivr.net/gh/reeyuki/BaldiBaldsTheUniversePort@bab7e27ee37b349e10c130d359ed461382a91595/";
+        const build = root + "Build/";
+        async function start() {
+            const fetchAsset = async (name, count) => {
+                const reqs = Array.from({ length: count }, (_, i) =>
+                    fetch(build + name + i.toString().padStart(2, '0')).then(r => {
+                        if (!r.ok) throw new Error();
+                        return r.arrayBuffer();
+                    })
+                );
+                const results = await Promise.all(reqs);
+                return URL.createObjectURL(new Blob(results));
+            };
+            try {
+                const [dataUrl, codeUrl, frameworkUrl] = await Promise.all([
+                    fetchAsset("baldibaldstheuniverse.data", 5),
+                    fetchAsset("baldibaldstheuniverse.wasm", 2),
+                    fetch(build + "baldibaldstheuniverse.framework.js").then(r => r.blob()).then(b => URL.createObjectURL(b))
+                ]);
+                const script = document.createElement("script");
+                script.src = build + "baldibaldstheuniverse.loader.js";
+                script.onload = () => {
+                    createUnityInstance(canvas, {
+                        dataUrl,
+                        codeUrl,
+                        frameworkUrl,
+                        streamingAssetsUrl: root + "StreamingAssets",
+                        companyName: "Baldi Balds The Universe",
+                        productName: "BaldiBaldsTheUniverse",
+                        productVersion: "1.2.7",
+                    }, (p) => {
+                        loading.innerText = "Loading... " + Math.round(p * 100) + "%";
+                    }).then(ui => {
+                        loading.style.display = "none";
+                    });
+                };
+                document.body.appendChild(script);
+            } catch (e) {
+                loading.innerText = "Error loading assets";
+            }
+        }
+        start();
+    </script>
+</body>
+
+</html>

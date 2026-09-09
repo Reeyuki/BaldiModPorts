@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en-us">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<title>Baldi Basic Creepy Run</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0a0a0a; overflow: hidden; font-family: Arial, sans-serif; }
+#unity-container { width: 100vw; height: 100vh; position: relative; }
+#unity-canvas { width: 100%; height: 100%; display: block; }
+#loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; color: #fff; }
+#loading-text { font-size: 24px; margin-bottom: 20px; }
+#loading-percent { font-size: 48px; font-weight: bold; color: #4CAF50; }
+
+</style>
+</head>
+<body>
+<div id="unity-container">
+<canvas id="unity-canvas" tabindex="-1"></canvas>
+<div id="loading">
+<div id="loading-text">Loading...</div>
+<div id="loading-percent">0%</div>
+</div>
+</div>
+<script>
+const baseUrl = "https://cdn.jsdelivr.net/gh/reeyuki/WheresBaldi/baldicreepyrun";
+const wasmName = "web.wasm";
+const wasmChunks = 6;
+const assets = [
+{ name: "web.data", url: `${baseUrl}/Build/web.data` },
+{ name: "web.framework.js", url: `${baseUrl}/Build/web.framework.js` },
+{ name: "web.loader.js", url: `${baseUrl}/Build/web.loader.js` }
+];
+let loadedCount = 0;
+let totalAssets = assets.length + wasmChunks;
+let wasmData = null;
+async function fetchAsset(url) {
+const response = await fetch(url);
+if (!response.ok) throw new Error(`Failed to load ${url}`);
+return await response.arrayBuffer();
+}
+async function fetchWasmChunks() {
+const chunks = [];
+for (let i = 0; i < wasmChunks; i++) {
+const chunkIndex = i.toString().padStart(2, '0');
+const url = `${baseUrl}/Build/${wasmName}${chunkIndex}`;
+const chunk = await fetchAsset(url);
+chunks.push(chunk);
+updateLoading();
+}
+const totalSize = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+wasmData = new Uint8Array(totalSize);
+let offset = 0;
+for (const chunk of chunks) {
+wasmData.set(new Uint8Array(chunk), offset);
+offset += chunk.byteLength;
+}
+}
+async function loadAssets() {
+const promises = assets.map(async (asset) => {
+asset.data = await fetchAsset(asset.url);
+updateLoading();
+});
+await Promise.all(promises);
+}
+function updateLoading() {
+loadedCount++;
+const percent = Math.floor((loadedCount / totalAssets) * 100);
+document.getElementById('loading-percent').textContent = percent + '%';
+}
+async function initUnity() {
+const canvas = document.querySelector('#unity-canvas');
+const config = {
+dataUrl: URL.createObjectURL(new Blob([assets.find(a => a.name === 'web.data').data])),
+frameworkUrl: URL.createObjectURL(new Blob([assets.find(a => a.name === 'web.framework.js').data])),
+codeUrl: URL.createObjectURL(new Blob([wasmData])),
+streamingAssetsUrl: "StreamingAssets",
+companyName: "BaldyBaldsTheUniverse",
+productName: "Baldi Basic Creepy Run",
+productVersion: "1.0"
+};
+const loaderScript = document.createElement('script');
+loaderScript.src = assets.find(a => a.name === 'web.loader.js').url;
+loaderScript.onload = () => {
+createUnityInstance(canvas, config, (progress) => {
+const percent = Math.floor(progress * 100);
+document.getElementById('loading-percent').textContent = percent + '%';
+}).then((instance) => {
+document.getElementById('loading').style.display = 'none';
+}).catch((message) => {
+alert(message);
+});
+};
+document.body.appendChild(loaderScript);
+}
+(async () => {
+try {
+await Promise.all([fetchWasmChunks(), loadAssets()]);
+await initUnity();
+} catch (error) {
+alert('Error loading game: ' + error.message);
+}
+})();
+</script>
+</body>
+</html>
