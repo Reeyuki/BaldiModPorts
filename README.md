@@ -14,3 +14,4 @@ Baldi mod webports collection by reeyuki
 | <img src="https://cdn.jsdelivr.net/gh/Reeyuki/baldimodports@main/icons/wheresBaldi.webp" width="32"> | Where's Baldi | `WheresBaldi` | `https://cdn.jsdelivr.net/gh/Reeyuki/baldimodports@main/WheresBaldi/` |
 | <img src="https://cdn.jsdelivr.net/gh/Reeyuki/baldimodports@main/icons/baldi.webp" width="32"> | Baldi Basic Creepy Run | `WheresBaldi/baldicreepyrun` | `https://cdn.jsdelivr.net/gh/Reeyuki/baldimodports@main/WheresBaldi/baldicreepyrun/` |
 | <img src="https://cdn.jsdelivr.net/gh/Reeyuki/baldimodports@main/icons/baldi.webp" width="32"> | Wonky Baldi | `wonkybaldi` | `https://cdn.jsdelivr.net/gh/Reeyuki/baldimodports@main/wonkybaldi/` |
+| <img src="https://cdn.jsdelivr.net/gh/Reeyuki/baldimodports@main/icons/antidisestablishmentarianism.webp" width="32"> | Antidisestablishmentarianism | `Antidisestablishmentarianism` | `https://cdn.jsdelivr.net/gh/Reeyuki/baldimodports@main/Antidisestablishmentarianism/` |

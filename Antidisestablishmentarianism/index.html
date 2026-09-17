@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, height=device-height, initial-scale=1.0, viewport-fit=cover"
+    />
+    <title>Antidisestablishmentanarisanism</title>
+    <link
+      rel="icon"
+      href="https://cdn.jsdelivr.net/gh/reeyuki/yukios@main/favicon.ico"
+    />
+    <link
+      rel="shortcut icon"
+      href="https://cdn.jsdelivr.net/gh/reeyuki/yukios@main/favicon.ico"
+    />
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      html,
+      body {
+        height: 100%;
+        overflow: hidden;
+      }
+
+      body {
+        font-family: system-ui, sans-serif;
+        font-size: 14px;
+        background: #111;
+        color: #ddd;
+        display: flex;
+        flex-direction: column;
+        padding: 12px;
+        gap: 8px;
+      }
+
+      #topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-shrink: 0;
+      }
+
+      #topbar h1 {
+        font-size: 14px;
+        font-weight: 600;
+        color: #eee;
+        display: inline;
+      }
+
+      .by {
+        font-size: 13px;
+        color: #888;
+        margin-left: 8px;
+      }
+
+      .by a {
+        color: #aaa;
+        text-decoration: none;
+      }
+      .by a:hover {
+        color: #ddd;
+      }
+
+      #btn-fullscreen {
+        appearance: none;
+        background: #222;
+        border: 1px solid #333;
+        color: #ccc;
+        border-radius: 5px;
+        padding: 5px 10px;
+        font-size: 13px;
+        cursor: pointer;
+      }
+
+      #btn-fullscreen:hover {
+        background: #2a2a2a;
+      }
+      #btn-fullscreen:active {
+        background: #1a1a1a;
+      }
+
+      #unity-wrap {
+        flex: 1;
+        min-height: 0;
+        background: #000;
+        border: 1px solid #222;
+        border-radius: 4px;
+        overflow: hidden;
+        position: relative;
+      }
+
+      #unity-canvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+        outline: none;
+      }
+
+      #overlay {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      #loading-card {
+        background: #111;
+        border: 1px solid #2a2a2a;
+        border-radius: 6px;
+        padding: 20px;
+        width: min(420px, 90%);
+        display: grid;
+        gap: 10px;
+      }
+
+      #loading-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      #loading-header .label {
+        font-size: 13px;
+        color: #bbb;
+      }
+
+      #pct {
+        font-size: 13px;
+        color: #888;
+        font-variant-numeric: tabular-nums;
+      }
+
+      #status {
+        font-size: 12px;
+        color: #666;
+      }
+
+      #bar {
+        height: 4px;
+        background: #222;
+        border-radius: 2px;
+        overflow: hidden;
+      }
+
+      #bar-fill {
+        height: 100%;
+        width: 0%;
+        background: #555;
+        transition: width 120ms linear;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        #bar-fill {
+          transition: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="topbar">
+      <div>
+        <h1>Antidisestablishmentanarisanism</h1>
+        <span class="by"
+          >by
+          <a
+            href="https://reeyuki.nekoweb.org"
+            target="_blank"
+            rel="noreferrer noopener"
+            >reeyuki</a
+          ></span
+        >
+      </div>
+      <button id="btn-fullscreen" type="button">Fullscreen</button>
+    </div>
+
+    <div id="unity-wrap">
+      <canvas id="unity-canvas" width="960" height="600" tabindex="-1"></canvas>
+
+      <div id="overlay">
+        <div id="loading-card">
+          <div id="loading-header">
+            <span class="label">Loading</span>
+            <span id="pct">0%</span>
+          </div>
+          <div id="bar"><div id="bar-fill"></div></div>
+          <div id="status">Preparing…</div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const cdnBase =
+        "https://cdn.jsdelivr.net/gh/reeyuki/yukios-games@main/Antidisestablishmentarianism/";
+      const buildUrl = cdnBase + "Build";
+      const loaderUrl = buildUrl + "/antidis.loader.js";
+
+      const canvas = document.querySelector("#unity-canvas");
+      const overlay = document.querySelector("#overlay");
+      const statusEl = document.querySelector("#status");
+      const pctEl = document.querySelector("#pct");
+      const barFill = document.querySelector("#bar-fill");
+      const fullscreenBtn = document.querySelector("#btn-fullscreen");
+      const fullscreenTarget = document.querySelector("#unity-wrap");
+
+      function setProgress(p) {
+        const c = Math.max(0, Math.min(1, p));
+        barFill.style.width = (c * 100).toFixed(1) + "%";
+        pctEl.textContent = Math.round(c * 100) + "%";
+      }
+
+      function formatBytes(bytes) {
+        const units = ["B", "KB", "MB", "GB"];
+        let u = 0,
+          v = bytes;
+        while (v >= 1024 && u < units.length - 1) {
+          v /= 1024;
+          u++;
+        }
+        return `${v.toFixed(u === 0 ? 0 : 1)} ${units[u]}`;
+      }
+
+      async function fetchSplitToObjectUrl({
+        urlPrefix,
+        partCount,
+        mimeType,
+        onProgress,
+      }) {
+        const chunks = [];
+        let downloaded = 0,
+          expectedTotal = 0;
+        for (let i = 0; i < partCount; i++) {
+          const url = `${urlPrefix}.${String(i).padStart(2, "0")}`;
+          const res = await fetch(url, { cache: "force-cache" });
+          if (!res.ok)
+            throw new Error(
+              `Failed to fetch ${url}: ${res.status} ${res.statusText}`,
+            );
+          expectedTotal += Number(res.headers.get("content-length") || "0");
+          const buf = await res.arrayBuffer();
+          downloaded += buf.byteLength;
+          chunks.push(buf);
+          onProgress?.({ downloaded, expectedTotal });
+        }
+        return URL.createObjectURL(new Blob(chunks, { type: mimeType }));
+      }
+
+      const config = {
+        dataUrl: "",
+        frameworkUrl: buildUrl + "/antidis.framework.js",
+        codeUrl: "",
+        streamingAssetsUrl: buildUrl + "/StreamingAssets",
+        companyName: "antidisestablishmentanarisanism",
+        productName: "antidisestablishmentanarisanism",
+        productVersion: "antidisestablishmentanarisanism",
+      };
+
+      let unityInstance = null;
+
+      function syncFullscreenButton() {
+        fullscreenBtn.textContent = document.fullscreenElement
+          ? "Exit fullscreen"
+          : "Fullscreen";
+      }
+
+      document.addEventListener("fullscreenchange", syncFullscreenButton);
+
+      fullscreenBtn.addEventListener("click", async () => {
+        try {
+          if (!document.fullscreenElement) {
+            await fullscreenTarget.requestFullscreen?.();
+            unityInstance?.SetFullscreen?.(1);
+          } else {
+            await document.exitFullscreen?.();
+            unityInstance?.SetFullscreen?.(0);
+          }
+        } catch (e) {
+          console.warn(e);
+        }
+      });
+
+      (async () => {
+        statusEl.textContent = "Downloading…";
+        setProgress(0.01);
+
+        const dataSizeHint = 33088400;
+        const wasmSizeHint = 17932481;
+        let dataDownloaded = 0,
+          dataExpected = 0,
+          wasmDownloaded = 0,
+          wasmExpected = 0;
+
+        function refreshProgress() {
+          const dl = dataDownloaded + wasmDownloaded;
+          const total =
+            (dataExpected || dataSizeHint) + (wasmExpected || wasmSizeHint);
+          statusEl.textContent = `${formatBytes(dl)} / ${formatBytes(total)}`;
+          setProgress(Math.min(0.75, total > 0 ? (dl / total) * 0.75 : 0.02));
+        }
+
+        const [dataObjectUrl, wasmObjectUrl] = await Promise.all([
+          fetchSplitToObjectUrl({
+            urlPrefix: buildUrl + "/antidis.data",
+            partCount: 4,
+            mimeType: "application/octet-stream",
+            onProgress: ({ downloaded, expectedTotal }) => {
+              dataDownloaded = downloaded;
+              dataExpected = expectedTotal;
+              refreshProgress();
+            },
+          }),
+          fetchSplitToObjectUrl({
+            urlPrefix: buildUrl + "/antidis.wasm",
+            partCount: 2,
+            mimeType: "application/wasm",
+            onProgress: ({ downloaded, expectedTotal }) => {
+              wasmDownloaded = downloaded;
+              wasmExpected = expectedTotal;
+              refreshProgress();
+            },
+          }),
+        ]);
+
+        config.dataUrl = dataObjectUrl;
+        config.codeUrl = wasmObjectUrl;
+
+        statusEl.textContent = "Starting engine…";
+        setProgress(0.78);
+
+        await new Promise((resolve, reject) => {
+          const script = document.createElement("script");
+          script.src = loaderUrl;
+          script.async = true;
+          script.onload = resolve;
+          script.onerror = () =>
+            reject(new Error(`Failed to load ${loaderUrl}`));
+          document.body.appendChild(script);
+        });
+
+        try {
+          unityInstance = await createUnityInstance(
+            canvas,
+            config,
+            (progress) => {
+              setProgress(0.78 + Math.max(0, Math.min(1, progress)) * 0.22);
+              statusEl.textContent = "Initializing…";
+            },
+          );
+          overlay.style.display = "none";
+        } catch (e) {
+          console.error(e);
+          statusEl.textContent = "Failed to start. Check console for details.";
+          setProgress(1);
+          alert(e?.message || String(e));
+        }
+      })();
+    </script>
+  </body>
+</html>
