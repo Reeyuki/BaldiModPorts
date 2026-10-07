@@ -101,6 +101,77 @@
 
       loadingBar.style.display = "block";
 
+      // Split-file reconstruction shim: files larger than 20 MB were split
+      // into 20 MB chunks (<url>.part00, .part01, ...) to satisfy CDN file
+      // size limits. NOTE: despite the ".br" extension, these build files
+      // are stored uncompressed (raw UnityWebData1.0 / wasm magic), so plain
+      // concatenation reproduces the exact original bytes (verified via
+      // SHA-256) and no decompression is needed. Unity keeps requesting the
+      // original .br URLs (see config above); only our patched fetch knows
+      // they are split.
+      (function installSplitFileShim() {
+        var SPLIT_FILES = [
+          { suffix: "horo nite 3d.data.br", parts: 9, contentType: "application/octet-stream" },
+          { suffix: "horo nite 3d.wasm.br", parts: 2, contentType: "application/wasm" },
+        ];
+        var originalFetch = window.fetch.bind(window);
+        function matchSplit(url) {
+          var decoded = url;
+          try { decoded = decodeURI(url); } catch (e) {}
+          for (var i = 0; i < SPLIT_FILES.length; i++) {
+            if (decoded.endsWith(SPLIT_FILES[i].suffix)) return SPLIT_FILES[i];
+          }
+          return null;
+        }
+        function partName(i) {
+          return ".part" + String(i).padStart(2, "0");
+        }
+        function fetchSplit(originalUrl, entry, onProgress) {
+          var partUrls = [];
+          for (var i = 0; i < entry.parts; i++) partUrls.push(originalUrl + partName(i));
+          var loaded = 0;
+          return Promise.all(partUrls.map(function (u, idx) {
+            // Parts are plain byte ranges of the original file, so plain
+            // concatenation reproduces the original bytes exactly.
+            // Use originalFetch directly to bypass this shim (part URLs do
+            // not match any split entry anyway).
+            return originalFetch(u).then(function (res) {
+              if (!res.ok) throw new Error("Failed to download " + u + ": " + res.status);
+              return res.arrayBuffer().then(function (buf) {
+                loaded++;
+                if (onProgress) onProgress(loaded / entry.parts);
+                return { idx: idx, buf: buf };
+              });
+            });
+          })).then(function (chunks) {
+            chunks.sort(function (a, b) { return a.idx - b.idx; });
+            var total = chunks.reduce(function (n, c) { return n + c.buf.byteLength; }, 0);
+            var combined = new Uint8Array(total);
+            var off = 0;
+            chunks.forEach(function (c) {
+              combined.set(new Uint8Array(c.buf), off);
+              off += c.buf.byteLength;
+            });
+            return new Response(combined, {
+              status: 200,
+              headers: {
+                "Content-Length": String(combined.byteLength),
+                "Content-Type": entry.contentType,
+              },
+            });
+          });
+        }
+        var patchedFetch = function (url, opts) {
+          var urlStr = typeof url === "string" ? url : (url && url.url ? url.url : "");
+          var entry = urlStr ? matchSplit(urlStr) : null;
+          if (entry && (!opts || !opts.method || opts.method === "GET")) {
+            return fetchSplit(urlStr, entry);
+          }
+          return originalFetch(url, opts);
+        };
+        window.fetch = patchedFetch;
+      })();
+
       var script = document.createElement("script");
       script.src = loaderUrl;
       script.onload = () => {
